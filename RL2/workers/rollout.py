@@ -12,6 +12,8 @@ from sglang.srt.utils import MultiprocessingSerializer
 from sglang.srt.model_executor.model_runner import LocalSerializedTensor
 from tqdm.asyncio import tqdm
 import wandb
+import json
+from pathlib import Path
 from RL2.workers import Worker
 from RL2.datasets import get_tensor_dict, pack_tensor_dicts
 from RL2.utils.comm import split_and_scatter_list, gather_and_concat_list
@@ -106,6 +108,34 @@ class Rollout(Worker):
         tensor_dict["llm_logps"] = torch.FloatTensor(state_dict["logps"][1:])
         tensor_dict["rewards"] = torch.FloatTensor(state_dict["rewards"][1:])
         return tensor_dict
+
+    def save_trajectories(self, all_tensor_dicts, step, train):
+        """Save trajectory data in JSON format."""
+        if not getattr(self.config, 'save_trajectories', False) or dist.get_rank() != 0:
+            return
+        save_freq = getattr(self.config, 'trajectories_save_freq', None) 
+        if save_freq is not None and step % save_freq != 0:
+            return
+            
+        save_dir = Path(getattr(self.config, 'trajectories_save_dir', 'trajectories'))
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        trajectories = []
+        for traj_idx, tensor_dicts in enumerate(all_tensor_dicts):
+            for seq_idx, td in enumerate(tensor_dicts):
+                states = td['states'].tolist()
+                rewards = td['rewards'].tolist() if 'rewards' in td else []
+                decoded_states = self.tokenizer.decode(states, skip_special_tokens=False)
+                trajectories.append({
+                    'trajectory_id': traj_idx,
+                    'sequence_id': seq_idx,
+                    'text': decoded_states,
+                    'total_reward': sum(rewards)
+                })
+        
+        filename = save_dir / f"trajectories_step{step}_{'train' if train else 'test'}.json"
+        with open(filename, 'w') as f:
+            json.dump({'step': step, 'train': train, 'num_trajectories': len(trajectories), 'trajectories': trajectories}, f, indent=2)
         
     async def rollout(self, ex, train):
 
@@ -204,6 +234,7 @@ class Rollout(Worker):
             gather_and_log(metrics, self.device_mesh["dp"], step)
 
             if not train:
+                self.save_trajectories(all_tensor_dicts, step, train)
                 return
 
             all_tensor_dicts = gather_and_concat_list(
@@ -211,6 +242,8 @@ class Rollout(Worker):
             )
 
             if dist.get_rank() == 0:
+                # Save trajectories before any filtering
+                self.save_trajectories(all_tensor_dicts, step, train)
 
                 group_size = self.config.responses_per_prompt
                 if group_size > 1 and self.config.dynamic_filtering:

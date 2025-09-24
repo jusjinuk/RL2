@@ -1,4 +1,5 @@
 import glob
+import shutil
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
@@ -88,6 +89,18 @@ def save_ckpt(trainer, workers, step):
         get_ckpt(trainer, workers, step),
         checkpoint_id=f"{trainer.config.trainer.save_dir}/step{step}"
     )
+    dist.barrier()
+
+    # Keep only the most recent checkpoint directory
+    if dist.get_rank() == 0:
+        save_dirs = glob.glob(f"{trainer.config.trainer.save_dir}/step*")
+        for dir_path in save_dirs:
+            if not dir_path.endswith(f"/step{step}"):
+                shutil.rmtree(dir_path, ignore_errors=True)
+    dist.barrier()
+
+    # Also update the exported model for the most recent step
+    save_model(trainer, workers[0])
 
 def save_model(trainer, worker, rm=False):
 

@@ -61,6 +61,9 @@ rollout:
   env_path: null
   dynamic_filtering: true
   base_port: 30000
+  save_trajectories: false
+  trajectories_save_freq: null
+  trajectories_save_dir: trajectories/${trainer.experiment_name}
 
 ref_actor:
   model_name: ${actor.model_name}
