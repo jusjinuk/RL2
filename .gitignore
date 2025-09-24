@@ -131,3 +131,6 @@ core-*
 nohup.out
 test.py
 MANIFEST.in
+trajectories/
+ckpts
+.envrc
