@@ -45,6 +45,7 @@ class Rollout(Worker):
             self.test_sampling_params = OmegaConf.to_container(
                 config.test_sampling_params
             )
+            self.max_new_tokens_from_turn2 = config.max_new_tokens_from_turn2
 
         dist.barrier()
 
@@ -133,7 +134,7 @@ class Rollout(Worker):
                     'total_reward': sum(rewards)
                 })
         
-        filename = save_dir / f"trajectories_step{step}_{'train' if train else 'test'}.json"
+        filename = save_dir / f"trajectories_rank0_step{step}_{'train' if train else 'test'}.json"
         with open(filename, 'w') as f:
             json.dump({'step': step, 'train': train, 'num_trajectories': len(trajectories), 'trajectories': trajectories}, f, indent=2)
         
@@ -150,10 +151,16 @@ class Rollout(Worker):
         scores = []
         for turn in range(1, self.config.max_turns + 1):
 
+            if train:
+                sampling_params = self.train_sampling_params
+            else:
+                sampling_params = self.test_sampling_params
+            if turn > 1:
+                sampling_params["max_new_tokens"] = self.max_new_tokens_from_turn2
+
             llm_response = await self.llm.async_generate(
                 input_ids=state_dict["states"],
-                sampling_params=self.train_sampling_params
-                if train else self.test_sampling_params,
+                sampling_params=sampling_params,
                 return_logprob=True
             )
 

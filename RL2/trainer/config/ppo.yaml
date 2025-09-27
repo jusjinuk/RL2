@@ -58,6 +58,7 @@ rollout:
     stop: ${rollout.train_sampling_params.stop}
     no_stop_trim: ${rollout.train_sampling_params.no_stop_trim}
   max_turns: 1
+  max_new_tokens_from_turn2: ${rollout.train_sampling_params.max_new_tokens}
   env_path: null
   dynamic_filtering: true
   base_port: 30000
