@@ -12,6 +12,10 @@ def load_dataset(data_path):
         split, data_path = data_path.split("@")
     else:
         split = "train"
+    if ":" in data_path:
+        data_path, subset = data_path.split(":", 1)
+    else:
+        subset = None
     
     ext = os.path.splitext(data_path)[-1].strip(".")
     if ext in ["json", "jsonl", "csv", "parquet", "arrow"]:
@@ -19,7 +23,10 @@ def load_dataset(data_path):
             ext = "json"
         return datasets.load_dataset(ext, data_files=data_path, split=split)
     else:
-        return datasets.load_dataset(data_path, split=split)
+        if subset:
+            return datasets.load_dataset(data_path, subset, split=split)
+        else:
+            return datasets.load_dataset(data_path, split=split)
 
 def get_dataloader(dataset, batch_size):
     return StatefulDataLoader(
