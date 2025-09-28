@@ -13,6 +13,7 @@ from sglang.srt.model_executor.model_runner import LocalSerializedTensor
 from tqdm.asyncio import tqdm
 import wandb
 import json
+import copy
 from pathlib import Path
 from RL2.workers import Worker
 from RL2.datasets import get_tensor_dict, pack_tensor_dicts
@@ -152,9 +153,9 @@ class Rollout(Worker):
         for turn in range(1, self.config.max_turns + 1):
 
             if train:
-                sampling_params = self.train_sampling_params
+                sampling_params = copy.deepcopy(self.train_sampling_params)
             else:
-                sampling_params = self.test_sampling_params
+                sampling_params = copy.deepcopy(self.test_sampling_params)
             if turn > 1:
                 sampling_params["max_new_tokens"] = self.max_new_tokens_from_turn2
 

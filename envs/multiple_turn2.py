@@ -1,10 +1,11 @@
 import os
 import re
+import asyncio
 import aiohttp
 
 lang2Language = {"r": "R", "rkt": "Racket", "ml": "OCaml", "jl": "Julia", "lua": "Lua"}
 Language2lang = {"R": "r", "Racket": "rkt", "OCaml": "ml", "Julia": "jl", "Lua": "lua"}
-lang2executor = {"r": "r", "rkt": "racket", "ml": "ocaml", "jl": "julia", "lua": "lua"}
+lang2executor = {"r": "R", "rkt": "racket", "ml": "ocaml", "jl": "julia", "lua": "lua"}
 
 def _ml_prefix(): 
     return {'ml': ['(*'], 'jl': ['"""'], 'lua': [], 'r': [], 'rkt': []}
@@ -60,8 +61,13 @@ async def step(state: str, action: str, extra_info: dict):
 
     payload = {'code': final_code, 'language': lang2executor[lang]}
     async with aiohttp.ClientSession() as sess:
-        async with sess.post(run_url, json=payload) as resp:
-            res = await resp.json()
+        while True:
+            try:
+                async with sess.post(run_url, json=payload) as resp:
+                    res = await resp.json()
+                    break
+            except Exception:
+                await asyncio.sleep(1)
 
     rr = res.get('run_result', {})
     rc = rr.get('return_code', 1)
