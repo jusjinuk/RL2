@@ -134,3 +134,4 @@ MANIFEST.in
 trajectories/
 ckpts
 .envrc
+unittest/
