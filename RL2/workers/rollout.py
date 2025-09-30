@@ -210,6 +210,7 @@ class Rollout(Worker):
         # model-agnostic operations, e.g., computing advantages, globally 
         # and guarantees the load balancing across all model computations.
         if self.device_mesh["tp"].get_local_rank() == 0:
+            torch.cuda.empty_cache()
 
             data_list = split_and_scatter_list(
                 data_list, self.device_mesh["dp"]
