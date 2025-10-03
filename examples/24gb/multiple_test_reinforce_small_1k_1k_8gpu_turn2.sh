@@ -27,6 +27,6 @@ torchrun \
     trainer.project=MultiPL-E-$1 \
     trainer.experiment_name=multiple-$1-qwen3-4b-thinking-2507-reinforce-1k-1k-8gpu-turn2 \
     trainer.save_freq=20 \
-    trainer.n_epochs=40 \
+    trainer.n_epochs=80 \
     rollout.save_trajectories=true \
     rollout.trajectories_save_freq=1

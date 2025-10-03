@@ -34,6 +34,8 @@ def _clean_code(s: str, lang: str) -> str:
         if t.startswith(('#lang', '#julia', '#r', '#rkt', '#ocaml', '#lua')):
             lines.pop(i)
             break
+    if lang == "rkt":
+        lines = ["#lang racket"] + lines
     return '\n'.join(lines).rstrip()
 
 def _passed(rc: int) -> bool:
