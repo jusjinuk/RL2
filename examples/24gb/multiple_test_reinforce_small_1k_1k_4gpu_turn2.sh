@@ -9,7 +9,8 @@ case "$1" in
   *) usage ;;
 esac
 
-export OMP_NUM_THREADS=4
+# export OMP_NUM_THREADS=4
+# To increase CPU throughput
 
 torchrun \
     --nproc_per_node=4 \
@@ -26,14 +27,13 @@ torchrun \
     rollout.env_path=envs/multiple_turn2.py \
     adv.estimator=reinforce \
     trainer.project=MultiPL-E-$1 \
-    trainer.experiment_name=multiple-$1-qwen3-4b-thinking-2507-reinforce-1k-1k-4gpu-turn2-pdb \
+    trainer.experiment_name=multiple-$1-qwen3-4b-thinking-2507-reinforce-1k-1k-4gpu-turn2 \
     trainer.save_freq=20 \
     trainer.n_epochs=80 \
     rollout.save_trajectories=true \
     rollout.trajectories_save_freq=1 \
-
+    actor.use_liger_kernel=true
     # Reduce training memory peak
-    actor.use_liger_kernel=true \ 
+    
+    # rollout.gpu_memory_utilization=0.7
     # Higher: Faster Rollout (SGLang can use more memory for caching, etc) but be careful with OOM
-    rollout.gpu_memory_utilization=0.7
-
