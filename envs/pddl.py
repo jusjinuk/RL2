@@ -287,7 +287,7 @@ async def step(state: str, action: str, extra_info: dict):
             - domain: Domain name (required)
             - domain_pddl: Domain PDDL string (required)
             - is_placeholder: Whether to allow placeholders (default: False)
-            - timeout: Evaluation timeout in seconds (default: 900)
+            - timeout: Evaluation timeout in seconds (default: 600)
 
     Returns:
         dict with:
@@ -315,7 +315,7 @@ async def step(state: str, action: str, extra_info: dict):
     domain_pddl = extra_info.get("domain_pddl")
     domains = {domain_name: domain_pddl}
     is_placeholder = extra_info.get("is_placeholder")
-    timeout = 900
+    timeout = 600
 
     # Evaluate with timeout
     try:

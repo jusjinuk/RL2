@@ -1,0 +1,12 @@
+python multipl_eval.py \
+  --name "Qwen/Qwen3-4B-Thinking-2507" \
+  --lang jl \
+  --output-dir ./multipl_e/jl/qwen3 \
+  --completion-limit 4 \
+  --batch-size 64 \
+  --first-turn-max-new-tokens 1024 \
+  --second-turn-max-new-tokens 1024 \
+  --evaluate \
+  --notes "multipl_e jl qwen3" \
+  --passk-path results.csv \
+  --dataset-index 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15

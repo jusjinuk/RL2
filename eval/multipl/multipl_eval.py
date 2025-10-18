@@ -13,6 +13,9 @@ import asyncio
 import aiohttp
 import numpy as np
 import os
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from analyze.timing_tracker import TimingTracker
 
 LANG_MAP = {"r": "R", "rkt": "Racket", "ml": "OCaml", "jl": "Julia", "lua": "Lua"}
 
@@ -51,7 +54,7 @@ def arg_parser():
     parser.add_argument("--evaluate", action='store_true')
     parser.add_argument("--passk-path", type=str, help="CSV file to save pass@k results")
     parser.add_argument("--notes", type=str, default="", help="Additional notes to save in CSV")
-    parser.add_argument("--eval-url", type=str, default='http://147.46.15.142:8081/run_code')
+    parser.add_argument("--eval-url", type=str, default='http://147.46.15.142:8080/run_code')
     return parser
 
 def get_params(model_name):
@@ -123,65 +126,77 @@ def evaluate_batch(codes, url, lang):
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(evaluate_batch_async(codes, url, lang))
 
-def make_main(args, model_name, gen_completions):
+def make_main(args, model_name, gen_completions, tracker: TimingTracker):
     exp_dir = Path(args.output_dir)
     exp_dir.mkdir(parents=True, exist_ok=True)
 
-    problems = datasets.load_dataset("jsbyun121/MultiPL-E-fixed", f"humaneval-{args.lang}", split="test")
+    with tracker.stage("1_get_ready"):
+        problems = datasets.load_dataset("jsbyun121/MultiPL-E-fixed", f"humaneval-{args.lang}", split="test")
 
-    if args.dataset_index:
-        extract_num = lambda name: int(re.search(r'HumanEval_(\d+)_', name).group(1)) if re.search(r'HumanEval_(\d+)_', name) else None
-        problems = problems.filter(lambda x: extract_num(x["name"]) in args.dataset_index)
+        if args.dataset_index:
+            extract_num = lambda name: int(re.search(r'HumanEval_(\d+)_', name).group(1)) if re.search(r'HumanEval_(\d+)_', name) else None
+            problems = problems.filter(lambda x: extract_num(x["name"]) in args.dataset_index)
 
-    all_completions = dict(read_completions(exp_dir, args.name, args.first_turn_max_new_tokens, args.second_turn_max_new_tokens, p) for p in problems)
+        all_completions = dict(read_completions(exp_dir, args.name, args.first_turn_max_new_tokens, args.second_turn_max_new_tokens, p) for p in problems)
 
-    problem_list = []
-    for comp in all_completions.values():
-        if len(comp["final_response"]) < args.completion_limit:
-            item = {"prompt": comp["prompt"], "name": comp["name"]}
-            problem_list.extend([item] * (args.completion_limit - len(comp["final_response"])))
+        problem_list = []
+        for comp in all_completions.values():
+            if len(comp["final_response"]) < args.completion_limit:
+                item = {"prompt": comp["prompt"], "name": comp["name"]}
+                problem_list.extend([item] * (args.completion_limit - len(comp["final_response"])))
 
-    batches = [problem_list[i:i+args.batch_size] for i in range(0, len(problem_list), args.batch_size)]
+        batches = [problem_list[i:i+args.batch_size] for i in range(0, len(problem_list), args.batch_size)]
 
-    for batch in tqdm(batches, unit="batch"):
-        new_completions = gen_completions(
-            prompts=[item["prompt"] for item in batch],
-            first_turn_max_new_tokens=args.first_turn_max_new_tokens,
-            second_turn_max_new_tokens=args.second_turn_max_new_tokens,
-            temperature=None,
-            top_p=None,
-        )
+    # Generation and evaluation phases
+    all_codes_to_eval = []
 
-        modified = set()
-        codes_to_eval = []
+    with tracker.stage("2_generate"):
+        for batch in tqdm(batches, unit="batch"):
+            new_completions = gen_completions(
+                prompts=[item["prompt"] for item in batch],
+                first_turn_max_new_tokens=args.first_turn_max_new_tokens,
+                second_turn_max_new_tokens=args.second_turn_max_new_tokens,
+                temperature=None,
+                top_p=None,
+            )
 
-        for item, (reasoning, response) in zip(batch, new_completions):
-            comp = all_completions[item["name"]]
-            comp["prompt_and_reasoning"].append(reasoning)
-            comp["final_response"].append(response)
+            modified = set()
 
-            code = process_final_response(response, model_name, args.lang)
-            comp["completions"].append(code)
+            for item, (reasoning, response) in zip(batch, new_completions):
+                comp = all_completions[item["name"]]
+                comp["prompt_and_reasoning"].append(reasoning)
+                comp["final_response"].append(response)
 
-            if args.evaluate:
-                full_code = code + '\n\n' + comp["tests"]
-                codes_to_eval.append((item["name"], full_code))
+                code = process_final_response(response, model_name, args.lang)
+                comp["completions"].append(code)
 
-            modified.add(item["name"])
+                if args.evaluate:
+                    full_code = code + '\n\n' + comp["tests"]
+                    all_codes_to_eval.append((item["name"], full_code))
 
-        if codes_to_eval:
+                modified.add(item["name"])
+
+            for name in modified:
+                with gzip.open(exp_dir / f"{name}.json.gz", "wt") as f:
+                    f.write(json.dumps(all_completions[name]))
+
+    # Separate evaluation phase
+    if all_codes_to_eval:
+        with tracker.stage("3_evaluate"):
             eval_results = evaluate_batch(
-                [code for _, code in codes_to_eval],
+                [code for _, code in all_codes_to_eval],
                 args.eval_url,
                 args.lang
             )
 
-            for (name, _), res in zip(codes_to_eval, eval_results):
+            for (name, _), res in zip(all_codes_to_eval, eval_results):
                 all_completions[name]["eval_results"].append(res.get('run_result', {}))
 
-        for name in modified:
-            with gzip.open(exp_dir / f"{name}.json.gz", "wt") as f:
-                f.write(json.dumps(all_completions[name]))
+            # Save updated results with evaluations
+            modified_names = {name for name, _ in all_codes_to_eval}
+            for name in modified_names:
+                with gzip.open(exp_dir / f"{name}.json.gz", "wt") as f:
+                    f.write(json.dumps(all_completions[name]))
 
 def _remove_until_end_reasoning(final_response, model_name):
     pattern_config = MODEL_PATTERNS.get(get_params(model_name)["name"])
@@ -349,7 +364,30 @@ def pass_k(output_dir, lang, model_name, csv_path=None, notes=""):
 
 if __name__ == "__main__":
     args = arg_parser().parse_args()
+
+    # Initialize timing tracker
+    experiment_name = f"multipl_{args.lang}_{args.name.replace('/', '_').replace('-', '_')}"
+    tracker = TimingTracker(args.output_dir, experiment_name)
+
+    # Record metadata
+    tracker.record_metadata(
+        model=args.name,
+        lang=args.lang,
+        batch_size=args.batch_size,
+        completion_limit=args.completion_limit,
+        first_turn_max_new_tokens=args.first_turn_max_new_tokens,
+        second_turn_max_new_tokens=args.second_turn_max_new_tokens,
+        dataset_index=args.dataset_index
+    )
+
+    # Run pipeline stages
     model = Model(args.name, args.lang, lora_path=args.lora_path)
-    make_main(args, args.name.replace("/", "_").replace("-", "_"), model.completions)
+    make_main(args, args.name.replace("/", "_").replace("-", "_"), model.completions, tracker)
+
+    # Wrapup: calculate pass@k
     if args.passk_path:
-        pass_k(args.output_dir, args.lang, args.name, args.passk_path, args.notes)
+        with tracker.stage("4_wrapup"):
+            pass_k(args.output_dir, args.lang, args.name, args.passk_path, args.notes)
+
+    # Save timing data
+    tracker.save()

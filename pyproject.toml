@@ -20,10 +20,14 @@ dependencies = [
     "omegaconf>=2.3.0",
     "nvidia-ml-py>=13.580.82",
     "math-verify>=0.8.0",
+    "planetarium",
 ]
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{requirement = "torch", match-runtime = true}]
+
+[tool.uv.sources]
+planetarium = { git = "https://github.com/BatsResearch/planetarium.git" }
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

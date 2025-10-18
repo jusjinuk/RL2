@@ -26,8 +26,10 @@ from datetime import datetime
 import sys
 from functools import lru_cache
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from envs.pddl import equivalence, extract_pddl_from_response
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from analyze.timing_tracker import TimingTracker
 
 # Model-specific patterns for reasoning extraction
 MODEL_PATTERNS = {
@@ -62,7 +64,6 @@ def arg_parser():
     parser.add_argument("--domain-path", type=str, default="~/RL2/pddl")
     return parser
 
-@lru_cache(maxsize=8)
 def get_params(model_name):
     """Get model-specific parameters (cached for performance)."""
     name_lower = model_name.lower()
@@ -171,74 +172,85 @@ def process_final_response(final_response: str, model_name: str) -> str:
 
     return extract_pddl_from_response(final_response)
 
-def make_main(args, model_name, gen_completions, domains):
+def make_main(args, model_name, gen_completions, domains, tracker: TimingTracker):
     """Main execution loop for PDDL generation and evaluation."""
     exp_dir = Path(args.output_dir)
     exp_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load and filter dataset
-    problems = datasets.load_dataset(args.dataset, split=args.dataset_split)
-    if args.dataset_index:
-        problems = problems.filter(lambda x: x["id"] in args.dataset_index)
+    with tracker.stage("1_get_ready"):
+        # Load and filter dataset
+        problems = datasets.load_dataset(args.dataset, split=args.dataset_split)
+        if args.dataset_index:
+            problems = problems.filter(lambda x: x["id"] in args.dataset_index)
 
-    # Add prompts
-    problems = problems.map(lambda ex: {
-        **ex,
-        "prompt": format_pddl_prompt(ex["natural_language"], domains[ex["domain"]])
-    })
+        # Add prompts
+        problems = problems.map(lambda ex: {
+            **ex,
+            "prompt": format_pddl_prompt(ex["natural_language"], domains[ex["domain"]])
+        })
 
-    # Load existing completions
-    all_completions = dict(
-        read_completions(exp_dir, args.name, args.first_turn_max_new_tokens,
-                        args.second_turn_max_new_tokens, p) for p in problems
-    )
-
-    # Build problem list with needed completions
-    problem_list = []
-    for comp in all_completions.values():
-        if len(comp["final_response"]) < args.completion_limit:
-            needed = args.completion_limit - len(comp["final_response"])
-            item = {k: comp[k] for k in ["prompt", "id", "problem_pddl", "domain", "is_placeholder"]}
-            problem_list.extend([item] * needed)
-
-    batches = [problem_list[i:i+args.batch_size] for i in range(0, len(problem_list), args.batch_size)]
-
-    for batch_idx, batch in enumerate(tqdm(batches, unit="batch", desc="Processing")):
-        # Generate completions
-        new_completions = gen_completions(
-            prompts=[item["prompt"] for item in batch],
-            first_turn_max_new_tokens=args.first_turn_max_new_tokens,
-            second_turn_max_new_tokens=args.second_turn_max_new_tokens,
-            temperature=None, top_p=None
+        # Load existing completions
+        all_completions = dict(
+            read_completions(exp_dir, args.name, args.first_turn_max_new_tokens,
+                            args.second_turn_max_new_tokens, p) for p in problems
         )
 
-        modified = set()
-        pddl_to_eval = []
+        # Build problem list with needed completions
+        problem_list = []
+        for comp in all_completions.values():
+            if len(comp["final_response"]) < args.completion_limit:
+                needed = args.completion_limit - len(comp["final_response"])
+                item = {k: comp[k] for k in ["prompt", "id", "problem_pddl", "domain", "is_placeholder"]}
+                problem_list.extend([item] * needed)
 
-        for item, (reasoning, response) in zip(batch, new_completions):
-            comp = all_completions[item["id"]]
-            comp["prompt_and_reasoning"].append(reasoning)
-            comp["final_response"].append(response)
+        batches = [problem_list[i:i+args.batch_size] for i in range(0, len(problem_list), args.batch_size)]
 
-            pddl_code = process_final_response(response, model_name)
-            comp["completions"].append(pddl_code)
+    # Generation and evaluation phases
+    all_pddl_to_eval = []
 
-            if args.evaluate:
-                pddl_to_eval.append({
-                    "id": item["id"], "llm_pddl": pddl_code,
-                    "ground_truth": item["problem_pddl"],
-                    "domain": item["domain"], "is_placeholder": item["is_placeholder"]
-                })
-            modified.add(item["id"])
+    with tracker.stage("2_generate"):
+        for batch_idx, batch in enumerate(tqdm(batches, unit="batch", desc="Processing")):
+            # Generate completions
+            new_completions = gen_completions(
+                prompts=[item["prompt"] for item in batch],
+                first_turn_max_new_tokens=args.first_turn_max_new_tokens,
+                second_turn_max_new_tokens=args.second_turn_max_new_tokens,
+                temperature=None, top_p=None
+            )
 
-        # Batch evaluate
-        if pddl_to_eval:
-            print(f"\nEvaluating {len(pddl_to_eval)} PDDL problems (batch {batch_idx+1}/{len(batches)})...")
+            modified = set()
+
+            for item, (reasoning, response) in zip(batch, new_completions):
+                comp = all_completions[item["id"]]
+                comp["prompt_and_reasoning"].append(reasoning)
+                comp["final_response"].append(response)
+
+                pddl_code = process_final_response(response, model_name)
+                comp["completions"].append(pddl_code)
+
+                if args.evaluate:
+                    all_pddl_to_eval.append({
+                        "id": item["id"], "llm_pddl": pddl_code,
+                        "ground_truth": item["problem_pddl"],
+                        "domain": item["domain"], "is_placeholder": item["is_placeholder"]
+                    })
+                modified.add(item["id"])
+
+            # Save (optimized JSON serialization)
+            for problem_id in modified:
+                with gzip.open(exp_dir / f"{problem_id}.json.gz", "wt") as f:
+                    # Use separators for faster JSON serialization
+                    json.dump(all_completions[problem_id], f, separators=(',', ':'))
+
+    # Separate evaluation phase
+    if all_pddl_to_eval:
+        with tracker.stage("3_evaluate"):
+            print(f"\nEvaluating {len(all_pddl_to_eval)} PDDL problems...")
             eval_results = evaluate_pddl_batch(
-                [item["llm_pddl"] for item in pddl_to_eval],
-                [item["ground_truth"] for item in pddl_to_eval],
-                [{item["domain"]: domains[item["domain"]]} for item in pddl_to_eval],
-                [item["is_placeholder"] for item in pddl_to_eval]
+                [item["llm_pddl"] for item in all_pddl_to_eval],
+                [item["ground_truth"] for item in all_pddl_to_eval],
+                [{item["domain"]: domains[item["domain"]]} for item in all_pddl_to_eval],
+                [item["is_placeholder"] for item in all_pddl_to_eval]
             )
 
             # Stats
@@ -247,14 +259,14 @@ def make_main(args, model_name, gen_completions, domains):
                   f"Valid: {counts['valid']}/{len(eval_results)}, "
                   f"Equivalent: {counts['equivalent']}/{len(eval_results)}")
 
-            for eval_item, res in zip(pddl_to_eval, eval_results):
+            for eval_item, res in zip(all_pddl_to_eval, eval_results):
                 all_completions[eval_item["id"]]["eval_results"].append(res)
 
-        # Save (optimized JSON serialization)
-        for problem_id in modified:
-            with gzip.open(exp_dir / f"{problem_id}.json.gz", "wt") as f:
-                # Use separators for faster JSON serialization
-                json.dump(all_completions[problem_id], f, separators=(',', ':'))
+            # Save updated results with evaluations
+            modified_ids = {item["id"] for item in all_pddl_to_eval}
+            for problem_id in modified_ids:
+                with gzip.open(exp_dir / f"{problem_id}.json.gz", "wt") as f:
+                    json.dump(all_completions[problem_id], f, separators=(',', ':'))
 
 class Model:
     """Model wrapper for PDDL generation using SGLang."""
@@ -367,11 +379,33 @@ def pass_k(output_dir, model_name, csv_path=None, notes=""):
 if __name__ == "__main__":
     args = arg_parser().parse_args()
 
+    # Initialize timing tracker
+    experiment_name = f"pddl_{args.name.replace('/', '_').replace('-', '_')}"
+    tracker = TimingTracker(args.output_dir, experiment_name)
+
+    # Record metadata
+    tracker.record_metadata(
+        model=args.name,
+        dataset=args.dataset,
+        batch_size=args.batch_size,
+        completion_limit=args.completion_limit,
+        first_turn_max_new_tokens=args.first_turn_max_new_tokens,
+        second_turn_max_new_tokens=args.second_turn_max_new_tokens,
+        dataset_index=args.dataset_index
+    )
+
+    # Load domains (part of get_ready stage will be tracked)
     domains = load_domains(args.domain_path)
     print(f"Loaded {len(domains)} PDDL domains: {list(domains.keys())}")
 
+    # Run pipeline stages
     model = Model(args.name, lora_path=args.lora_path)
-    make_main(args, args.name.replace("/", "_").replace("-", "_"), model.completions, domains)
+    make_main(args, args.name.replace("/", "_").replace("-", "_"), model.completions, domains, tracker)
 
+    # Wrapup: calculate pass@k
     if args.passk_path:
-        pass_k(args.output_dir, args.name, args.passk_path, args.notes)
+        with tracker.stage("4_wrapup"):
+            pass_k(args.output_dir, args.name, args.passk_path, args.notes)
+
+    # Save timing data
+    tracker.save()
