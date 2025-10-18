@@ -39,44 +39,7 @@ Stage Breakdown:
 ============================================================
 ```
 
-### 2. Timing Comparison
-
-Compare timing results from multiple experiments using the `compare_timings()` function in `timing_tracker.py`.
-
-**Usage:**
-```python
-from timing_tracker import compare_timings
-from pathlib import Path
-import json
-
-# Compare specific files
-timing_files = [
-    "../multipl/multipl_e/jl/qwen3/timing_multipl_jl_qwen3.json",
-    "../pddl/pddl/qwen3/timing_pddl_qwen3.json"
-]
-data = compare_timings(timing_files)
-
-# Print comparison
-for entry in data:
-    print(f"{entry['experiment']}: {entry['total_duration_formatted']}")
-    for key, val in entry.items():
-        if key.endswith('_formatted'):
-            print(f"  {key}: {val}")
-
-# Or using glob patterns
-timing_files = list(Path("..").glob("*/*/qwen3/timing_*.json"))
-data = compare_timings([str(f) for f in timing_files])
-
-# Save as JSON if needed
-with open('comparison.json', 'w') as f:
-    json.dump(data, f, indent=2)
-```
-
-**Output:**
-- Returns list of dictionaries with timing data from each experiment
-- Each dictionary contains experiment name, timestamps, durations, and metadata
-
-### 3. Pass@1 Calculator (`pass_1.py`)
+### 2. Pass@1 Calculator (`pass_1.py`)
 
 Calculate pass@1 metrics for evaluation results.
 
@@ -167,7 +130,7 @@ qwen3,0.7450,164,4,4
 }
 ```
 
-## Workflow Examples
+## Workflow Example
 
 ### Complete Analysis Pipeline
 
@@ -185,37 +148,3 @@ python pass_1.py ../pddl/pddl/qwen3 --metric equivalent
 cat ../multipl/multipl_e/jl/qwen3/timing_*.json | jq .
 ```
 
-### Batch Analysis
-
-```bash
-# Analyze all experiments
-for dir in ../*/*/qwen3; do
-  echo "Analyzing $dir"
-  python pass_1.py "$dir" --suppress-header
-done
-```
-
-### Compare Timings (Python)
-
-```python
-from timing_tracker import compare_timings
-from pathlib import Path
-import json
-
-# Find all timing files
-timing_files = list(Path("..").glob("*/*/qwen3/timing_*.json"))
-
-# Compare
-data = compare_timings([str(f) for f in timing_files])
-
-# Print summary
-for entry in data:
-    print(f"\n{entry['experiment']}")
-    print(f"  Total: {entry['total_duration_formatted']}")
-    print(f"  Generate: {entry.get('2_generate_formatted', 'N/A')}")
-    print(f"  Evaluate: {entry.get('3_evaluate_formatted', 'N/A')}")
-
-# Save comparison
-with open('timing_comparison.json', 'w') as f:
-    json.dump(data, f, indent=2)
-```

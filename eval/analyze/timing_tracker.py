@@ -122,36 +122,3 @@ class TimingTracker:
             return f"{minutes}m {secs:.2f}s"
         else:
             return f"{secs:.2f}s"
-
-
-def compare_timings(timing_files: list[str]):
-    """Compare timing data from multiple experiments.
-
-    Returns:
-        List of dictionaries with timing data from each experiment.
-    """
-    data = []
-    for timing_file in timing_files:
-        with open(timing_file, 'r') as f:
-            timing_data = json.load(f)
-
-        row = {
-            'experiment': timing_data['experiment'],
-            'start_time': timing_data['start_time'],
-            'end_time': timing_data['end_time'],
-            'total_duration_seconds': timing_data.get('total_duration_seconds', 0),
-            'total_duration_formatted': timing_data.get('total_duration_formatted', 'N/A')
-        }
-
-        # Add stage durations
-        for stage_name, stage_data in timing_data.get('stages', {}).items():
-            row[f'{stage_name}_seconds'] = stage_data['duration_seconds']
-            row[f'{stage_name}_formatted'] = stage_data['duration_formatted']
-
-        # Add metadata if present
-        if 'metadata' in timing_data:
-            row['metadata'] = timing_data['metadata']
-
-        data.append(row)
-
-    return data
