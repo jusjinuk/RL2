@@ -11,7 +11,7 @@ class RLDataset(BaseDataset):
 
         if 'planetarium' in self.data_path.lower():
             self.domain_prompt = "The domain for the planning problem is:"
-            self.problem_prompt = "Generate the complete, valid problem PDDL file by wrapping your code in ```pddl markdown blocks:\n\n"
+            self.problem_prompt = "Provide me with the complete, valid problem PDDL file that describes the following planning problem in ```pddl markdown blocks:\n\n"
             self.domains_dict = self._load_domains()
         else:
             self.domain_prompt = None
@@ -21,7 +21,7 @@ class RLDataset(BaseDataset):
     def _load_domains(self) -> dict[str, str]:
         """Load PDDL domain files."""
         domains = {}
-        base_path = Path.home() / "RL2" / "pddl"
+        base_path = Path.home() / "RL2" / "eval" / "pddl"
         for domain_name in ["blocksworld", "gripper", "floor-tile"]:
             domain_path = base_path / f"{domain_name}.pddl"
             with open(domain_path) as f:
